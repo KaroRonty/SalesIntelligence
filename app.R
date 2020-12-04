@@ -1,13 +1,18 @@
 library(fable)
 library(purrr)
+library(furrr)
+library(shiny)
+library(feasts)
 library(scales)
 library(tsibble)
-library(Metrics)
 library(stringr)
 library(lubridate)
 library(tidyverse)
 library(data.table)
 library(strucchange)
+library(shinydashboard)
+
+source("functions.R")
 
 p_value_threshold <- 0.05
 
@@ -51,4 +56,46 @@ data_to_arima <- data_monthly %>%
   mutate(p_value = sctest(efp)$p) %>% 
   filter(p_value > p_value_threshold) %>%
   select(product) %>% 
-  inner_join(data_monthly)
+  inner_join(data_monthly) %>%
+  as_tsibble(key = "product", index = "yearmonth") %>% 
+  fill_gaps()
+
+# Train ARIMA models
+models <- data_to_arima %>% 
+  # Force intercept
+  model(ARIMA(quantity_sum ~ 1 + price_mean))
+
+ui <- dashboardPage(
+  title = "Sales dashboard",
+  dashboardHeader(),
+  dashboardSidebar(
+    selectizeInput("products", "Select products",
+                   choices = sort(unique(data_to_arima$product)),
+                   multiple = TRUE),
+    actionButton("run_optimization", "Run price optimization")
+  ),
+  dashboardBody(
+    fluidRow(
+      plotOutput("test_plot")
+    )
+  )
+)
+
+server <- function(input, output){
+  update_data <- eventReactive(input$run_optimization, {
+    suppressMessages(
+      # Print to suppress message about groups from ggplot
+      print(
+        plot_quantity_forecasts(
+          get_optimal_prices(input$products),
+          input$products)
+      )
+    )
+  })
+  
+  output$test_plot <- renderPlot({
+    update_data()
+  })
+}
+
+shinyApp(ui, server)
